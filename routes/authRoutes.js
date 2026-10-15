@@ -7,10 +7,10 @@ import {
   RegisterMiddleware,
   LoginMiddleware,
 } from "../middleware/authMiddleware.js";
-
+import { ratelimit } from "../middleware/rateLimiter.js";
 const router = express.Router();
 
-router.post("/auth/register", RegisterMiddleware, RegisterController);
-router.post("/auth/login", LoginMiddleware, LoginController);
+router.post("/auth/register", ratelimit,  RegisterMiddleware, RegisterController);
+router.post("/auth/login", ratelimit, LoginMiddleware, LoginController);
 
 export { router };

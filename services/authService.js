@@ -49,10 +49,11 @@ const LoginService = async (email, password) => {
       JWT_SECRET,
       { expiresIn: "15m" },
     );
+    console.log(`Login Sucessfull`)
     return token;
   } catch (err) {
     console.log(`Error in Login Service: ${err.message}`);
     throw err;
   }
 };
-export { RegisterService };
+export { RegisterService, LoginService };

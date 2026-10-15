@@ -17,6 +17,11 @@ const LoginController = async (req, res, next) => {
   try {
     const { email, password } = req.body;
     const Login = await LoginService(email, password);
+    res.cookie("token", Login, {
+      httpOnly: true,
+      maxAge: 10 * 1000 * 60,
+      sameSite: "strict",
+    });
     return res.status(200).json({ message: "Login Succesfull", token: Login });
   } catch (err) {
     console.log(`Error In Login Controller: ${err.message}`);
