@@ -1,9 +1,16 @@
 import express from "express";
-import { RegisterController } from "../controllers/authController.js";
-import { RegisterMiddleware } from "../middleware/authMiddleware.js";
+import {
+  RegisterController,
+  LoginController,
+} from "../controllers/authController.js";
+import {
+  RegisterMiddleware,
+  LoginMiddleware,
+} from "../middleware/authMiddleware.js";
 
 const router = express.Router();
 
-router.use("/auth/register", RegisterMiddleware, RegisterController);
+router.post("/auth/register", RegisterMiddleware, RegisterController);
+router.post("/auth/login", LoginMiddleware, LoginController);
 
 export { router };
