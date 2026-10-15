@@ -1,6 +1,6 @@
 import bcrypt from "bcrypt"
-import { userSchema } from "../models/userModels"
-import { isPassportNumber } from "validator"
+import validator from "validator"
+import { userSchema } from "../models/userModels.js"
 
 export const isExsistingUser = async(email)=>{
     console.log(`Email Received In Utils`)
@@ -13,9 +13,13 @@ export const isExsistingUser = async(email)=>{
     return found
 }
 
+export const isMail = (email)=>{
+    const mail =  validator.isEmail(email)
+    return mail
+}
+
 export const GenPass = async(password)=>{
-    const salt = bcrypt.genSalt(10)
-    const pass  = bcrypt.hash(password, salt)
-    console.log(`Password generated: ${isPassportNumber}`)
+    const salt = await bcrypt.genSalt(10)
+    const pass  = await bcrypt.hash(password, salt)
     return pass
 }

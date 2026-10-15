@@ -1,9 +1,9 @@
-import express from "express"
-import { RegisterController } from "../Proj17/controllers/authController"
+import express from "express";
+import { RegisterController } from "../controllers/authController.js";
+import { RegisterMiddleware } from "../middleware/authMiddleware.js";
 
-const router = express.Router()
+const router = express.Router();
 
-router.use('/auth/register', RegisterController)
+router.use("/auth/register", RegisterMiddleware, RegisterController);
 
-
-export {router}
+export { router };
