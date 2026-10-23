@@ -12,6 +12,7 @@ const PORT = process.env.PORT;
 const app = express();
 app.use(express.json());
 app.use(cookieParser())
+app.use("/uploads",express.static("uploads"))
 app.use(express.urlencoded({ extended: true }));
 app.use(cors());
 app.set("trust proxy", 1)

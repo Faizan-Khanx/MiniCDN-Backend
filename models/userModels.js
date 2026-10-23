@@ -9,6 +9,6 @@ const user = new mongoose.Schema(
   { timestamps: true },
 );
 
-const userSchema = await mongoose.model("Users", user);
+const userSchema =  mongoose.model("Users", user);
 
 export { userSchema };
