@@ -1,4 +1,9 @@
 import { isMail } from "../utils/authHelper.js"
+import jwt from "jsonwebtoken"
+import dotenv from "dotenv"
+dotenv.config()
+
+const JWT_SECRET = process.env.JWT_SECRET
 const RegisterMiddleware = async (req, res, next)=>{
     const {email, password} = req.body
     if(!email || !password){
@@ -27,4 +32,22 @@ const LoginMiddleware = async(req, res, next)=>{
     next()
 }
 
-export {RegisterMiddleware, LoginMiddleware}
+
+const isAuthenticatedUser = async(req, res, next)=>{
+  try{
+    const token  = req.cookies.token
+    if(token){
+      console.log(`JWT Received`)
+      const verify = await jwt.verify(token, JWT_SECRET)
+      req.user = verify
+      return next() 
+    }
+    console.log(`No JWT Found. Please Login`)
+    return res.status(404).json({message:"Login Required"})
+    
+  }catch(err){
+    console.error(`Error In Authentication Middlewware: ${err.message}`)
+    next(err)
+  }
+}
+export {RegisterMiddleware, LoginMiddleware, isAuthenticatedUser}

@@ -3,7 +3,7 @@ import multer from "multer";
 const limit = 50 * 1024 * 1024;
 const storage = multer.memoryStorage();
 
-const GuestCDNMiddleware = multer({
+const CDNMiddleware = multer({
   storage: storage,
   limits: { fileSize: limit },
   fileFilter: (req, file, cb) => {
@@ -31,5 +31,6 @@ const validateFileUpload = (req, res, next) => {
 };
 
 
-const GuestCDNUpload = GuestCDNMiddleware.single("file");
-export { GuestCDNUpload, validateFileUpload };
+
+const CDNUpload = CDNMiddleware.single("file");
+export { CDNUpload, validateFileUpload };
