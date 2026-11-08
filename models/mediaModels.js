@@ -2,7 +2,7 @@ import mongoose from "mongoose";
 
 const mediaModel = new mongoose.Schema(
   {
-    userId:{type:mongoose.Schema.ObjectId},
+    userId:{type:mongoose.Schema.ObjectId, ref:"Users"},
     fileName:{type:String, required:true, unique:true},
     originalSize:{type: Number, required:true},
     compressedSize:{type:Number, required:true},

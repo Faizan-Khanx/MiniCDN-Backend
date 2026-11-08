@@ -1,4 +1,4 @@
-import { CDNService, userCDN} from "../services/cdnService.js";
+import { CDNService, userCDN, GetUserAllImages} from "../services/cdnService.js";
 
 
 const userCDNController =  async (req, res, next) => {
@@ -12,8 +12,8 @@ const userCDNController =  async (req, res, next) => {
       .json({
         message: "File Upload Sucessfull",
         filetype:file.mimetype,
-        originalSize:`${(CDN.originalSize / 1024).toFixed(2)} KB`,
-        compressedSize:`${(CDN.compressedSize / 1024).toFixed(2)} KB`,
+        originalSize:`${(CDN.originalSize /( 1024 * 1024)).toFixed(2)} MB`,
+        compressedSize:`${(CDN.compressedSize / (1024 * 1024)).toFixed(2)} MB`,
         savingPercentage:`${CDN.savingspercent} %`,
         url:`${req.protocol}://${req.get("host")}/${CDN.url}`,
 
@@ -34,8 +34,8 @@ const CDNController = async (req, res, next) => {
       .json({
         message: "File Upload Sucessfull",
         filetype:file.mimetype,
-        originalSize:`${(CDN.originalSize / 1024).toFixed(2)} KB`,
-        compressedSize:`${(CDN.compressedSize / 1024).toFixed(2)} KB`,
+        originalSize:`${(CDN.originalSize /( 1024 * 1024)).toFixed(2)} MB`,
+        compressedSize:`${(CDN.compressedSize / (1024 * 1024)).toFixed(2)} MB`,
         savingPercentage:`${CDN.savingsPercent} %`,
         url:`${req.protocol}://${req.get("host")}/uploads/${CDN.fileName}`,
 
@@ -46,4 +46,24 @@ const CDNController = async (req, res, next) => {
   }
 };
 
-export { CDNController, userCDNController };
+const UserAllImagesController = async(req, res, next)=>{
+  try{
+    const userId = req.user.id
+    const media = await GetUserAllImages(userId)
+    console.log(`Images Received, Sending it to user`)
+    const formattedImage = media.map((item)=>({
+      filename:item.fileName,
+      url:`${req.protocol}://${req.get("host")}/${item.url}`,
+      originalSize:`${(item.originalSize / 1024).toFixed(2)} KB`,
+      compressedSize:`${(item.compressedSize / 1024).toFixed(2)} KB`,
+      savingPercentage:`${item.savingpercent} %`,
+    }))
+    return res.status(200).json({message:"Success", images:formattedImage})
+
+  }catch(err){
+    console.log(`Error In User All Images Controller: ${err.message}`)
+    next(err)
+  }
+}
+
+export { CDNController, userCDNController,UserAllImagesController };
