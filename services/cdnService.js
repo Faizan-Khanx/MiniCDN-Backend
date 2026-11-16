@@ -112,4 +112,21 @@ const GetUserAllImages = async (userId) => {
     throw new AppError("Error In Retreving Images", 500);
   }
 };
-export { CDNService, userCDN, GetUserAllImages };
+
+const DeleteUserImage = async(userId, fileName)=>{
+  try{
+    const image = await CDNSchema.findOneAndDelete({fileName:fileName, userId:userId})
+    if(!image){
+      throw new AppError("File not found or you are not authorized to delete it")
+    }
+    const filePath = path.join("uploads", image.fileName)
+    fs.promises.unlink(filePath).catch((err)=>{console.log(`Error in deleting file from the disk: ${err.message}`)})
+    console.log(`Image Deleted`)
+
+  }catch(err){
+    console.log(`Error In Deleting the Image: ${err.message}`)
+    throw err
+  }
+
+}
+export { CDNService, userCDN, GetUserAllImages,DeleteUserImage };
