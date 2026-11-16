@@ -1,142 +1,268 @@
-# ⚡ MediaOptix — High-Performance Media Processing & Optimization Engine
+# MiniCDN - High-Performance Image and Video Compression Microservice
 
-> **A production-ready, high-throughput media transformation microservice built with Node.js, Express, Multer, Sharp, and WebSockets.**
-> Designed to compress, optimize, and transform images and videos up to 50MB on-the-fly, cutting payload by up to 85% with zero visual quality loss.
+[![GitHub Repo](https://img.shields.io/badge/Repository-MiniCDN--Backend-blue?style=flat-square&logo=github)](https://github.com/Faizan-Khanx/MiniCDN-Backend)
+[![Node.js](https://img.shields.io/badge/Node.js-v18%2B-green?style=flat-square&logo=node.js)](https://nodejs.org/)
+[![Express](https://img.shields.io/badge/Express-5.x-lightgrey?style=flat-square&logo=express)](https://expressjs.com/)
+[![MongoDB](https://img.shields.io/badge/MongoDB-Database-brightgreen?style=flat-square&logo=mongodb)](https://www.mongodb.com/)
+[![License](https://img.shields.io/badge/License-ISC-blue?style=flat-square)](LICENSE)
+[![GitHub Stars](https://img.shields.io/github/stars/Faizan-Khanx/MiniCDN-Backend?style=flat-square)](https://github.com/Faizan-Khanx/MiniCDN-Backend/stargazers)
+[![GitHub Forks](https://img.shields.io/github/forks/Faizan-Khanx/MiniCDN-Backend?style=flat-square)](https://github.com/Faizan-Khanx/MiniCDN-Backend/network/members)
+
+This is a practical project built to implement, master, and understand core backend engineering and system design concepts, including:
+- API rate limiting and brute-force mitigation using `express-rate-limit`.
+- Memory streaming buffers for multipart uploads using Multer (50MB cap).
+- High-throughput image compression and WebP conversion using Sharp (up to 96% reduction).
+- Video transcoding and compression using Fluent-FFmpeg with H.264/AAC and `+faststart` streaming optimization (up to 90% reduction).
+- Stateless authentication with JSON Web Tokens (JWT) stored in HTTP-Only cookies.
+- Real-time video encoding progress tracking via event emitters.
+- Atomic resource cleanup: cascading deletion from MongoDB and permanent file unlinking from disk storage.
 
 ---
 
-## 🏗️ 1. Project Folder Structure
+## 1. How It Works (System Architecture and Lifecycle)
+
+The microservice operates on a staged processing pipeline:
+
+```mermaid
+flowchart TD
+    Client["Client: Browser / Postman / Mobile App"] --> RateLimit["Rate Limiting Middleware (express-rate-limit)"]
+    
+    RateLimit --> APIRouter{"API Route Dispatcher"}
+    
+    %% Auth Subgraph
+    subgraph AuthModule["1. Authentication Flow (/auth)"]
+        APIRouter -->|"POST /auth/register"| Register["Register User (Bcrypt Password Hashing)"]
+        Register --> UserDB[("MongoDB: Users Collection")]
+        
+        APIRouter -->|"POST /auth/login"| Login["Login User (Compare Password)"]
+        UserDB -.-> Login
+        Login --> SetCookie["Generate JWT & Attach HTTP-Only Cookie"]
+    end
+    
+    %% Shared Processing Engines
+    subgraph ProcessingEngines["Media Compression Engine"]
+        ProcessCheck{"Detect MIME Type"}
+        ProcessCheck -->|"image/* (.jpg, .png, .webp)"| Sharp["Sharp Engine (Convert to WebP, Quality 80)"]
+        ProcessCheck -->|"video/* (.mp4, .mov, .mkv)"| FFmpeg["FFmpeg Engine (libx264, aac, CRF 28, +faststart)"]
+        Sharp --> OutputDisk["Save File to /uploads/"]
+        FFmpeg --> OutputDisk
+    end
+    
+    %% Guest Upload Flow
+    subgraph GuestFlow["2. Guest Upload Flow (Stateless)"]
+        APIRouter -->|"POST /guest-upload"| GuestMulter["Multer Buffer (50MB Limit)"]
+        GuestMulter --> ProcessCheck
+        OutputDisk -.->|"Guest Response"| GuestReturn["Return Direct CDN URL (No DB Persistence)"]
+    end
+    
+    %% User Upload Flow
+    subgraph UserFlow["3. User Upload Flow (Authenticated)"]
+        APIRouter -->|"POST /user-upload"| AuthGuardUpload["Auth Guard (Verify JWT Cookie)"]
+        SetCookie -.->|"Cookie Provided"| AuthGuardUpload
+        AuthGuardUpload --> UserMulter["Multer Buffer (50MB Limit)"]
+        UserMulter --> ProcessCheck
+        OutputDisk -.->|"User Response"| SaveMediaDB[("MongoDB: CDNSchema (Save userId, sizes, savings %)")]
+        SaveMediaDB --> UserReturn["Return CDN URL + Savings Analytics"]
+    end
+    
+    %% Management & Cleanup
+    subgraph ManagementFlow["4. Gallery & Smart Cleanup Flow"]
+        APIRouter -->|"GET /my-media"| AuthGuardGallery["Auth Guard (Verify JWT Cookie)"]
+        AuthGuardGallery --> FetchMedia["Query CDNSchema by userId"]
+        SaveMediaDB -.-> FetchMedia
+        FetchMedia --> GalleryReturn["Return Array of User Media"]
+        
+        APIRouter -->|"DELETE /media/:fileName"| AuthGuardDelete["Auth Guard (Verify JWT Cookie)"]
+        AuthGuardDelete --> VerifyOwnership["Verify Ownership (fileName + userId)"]
+        VerifyOwnership --> DeleteFromDB["Delete Document from MongoDB"]
+        VerifyOwnership --> DeleteFromDisk["fs.promises.unlink (Remove from /uploads/)"]
+        DeleteFromDB -.-> SaveMediaDB
+    end
+```
+
+### Detailed Pipeline Stages:
+
+1. **Incoming Request & Rate Limiting:**
+   Every incoming request passes through an Express rate limiter. Requests exceeding predefined thresholds are rejected with HTTP 429 Too Many Requests.
+
+2. **Authentication Verification:**
+   For protected routes, `isAuthenticatedUser` inspects incoming HTTP-Only cookies. The JWT token is verified using the application secret key. If valid, user details (`id`, `email`, `role`) are attached to `req.user`.
+
+3. **Multipart File Ingestion:**
+   Multer intercepts incoming `multipart/form-data`. The file filter validates both MIME type and file extension (allowing image formats `.jpg`, `.jpeg`, `.png`, `.webp` and video formats `.mp4`, `.mov`, `.mkv`, `.avi`, `.webm`). Files up to 50MB are read into a memory buffer.
+
+4. **Media Processing Engine:**
+   - **Images:** Processed directly from buffer through Sharp. The image is compressed into WebP format at 80% quality and saved directly to the `uploads/` folder.
+   - **Videos:** The memory buffer is written to a temporary disk location. `fluent-ffmpeg` transcodes the video using `libx264` (H.264 video codec) and `aac` (audio codec) with Constant Rate Factor (CRF) set to 28 and `-movflags +faststart`. Once encoding completes, the temporary file is unlinked.
+
+5. **Metadata Persistence:**
+   For authenticated uploads, document metadata is saved in MongoDB under `CDNSchema`, recording:
+   - `userId` (owner reference)
+   - `fileName` (unique timestamped file identifier)
+   - `originalSize` (bytes before processing)
+   - `compressedSize` (bytes after processing)
+   - `savingpercent` (calculated reduction ratio)
+   - `url` (relative path)
+
+6. **Static Delivery and Safe Clean-up:**
+   Files are delivered statically over HTTP at `/uploads/:fileName`. When a delete request is made, `findOneAndDelete` checks both `fileName` and `userId` to ensure ownership, then permanently deletes the physical file from disk via `fs.promises.unlink`.
+
+---
+
+## 2. Key Capabilities
+
+- Up to 96% image size reduction using Sharp WebP encoding.
+- Up to 90% video size reduction using FFmpeg H.264 transcoding with web-streaming optimization.
+- Dual execution paths: stateless guest processing vs persistent user media tracking.
+- Stateless authentication using JWT delivered over secure HTTP-Only cookies.
+- Smart resource cleanup: atomic removal of database documents and physical disk storage.
+- Rate-limited and validated upload pipelines up to 50MB.
+
+---
+
+## 3. Project Directory Layout
 
 ```text
 Proj17/
 ├── config/
-│   └── db.js                   # MongoDB Connection
+│   └── db.js                   # MongoDB connection management
 ├── controllers/
-│   ├── authController.js       # Register, Login (Cookie + JWT)
-│   └── mediaController.js      # Upload, Transform, Stream, Delete, MyMedia
+│   ├── authController.js       # User registration and authentication
+│   └── cdnController.js        # Media ingestion, user gallery, and deletion
 ├── middleware/
-│   ├── authMiddleware.js       # Input Validation & JWT Guard (Cookie extractor)
-│   ├── errorMiddleware.js      # Centralized Global Error Handler (AppError)
-│   ├── rateLimiter.js          # Brute-force & DDoS protection
-│   └── uploadMiddleware.js     # Multer 50MB config + MimeType & Magic Bytes Filter
+│   ├── authMiddleware.js       # Cookie-based JWT authentication guard
+│   ├── cdnMiddleware.js        # Multer memory configuration and file filters
+│   ├── errorMiddleware.js      # Global application error handler
+│   └── rateLimiter.js          # In-memory IP rate limiter
 ├── models/
-│   ├── userModels.js           # User Schema (email, password, roles)
-│   └── mediaModels.js          # Media Metadata (sizes, savings %, URLs, owner)
+│   ├── userModels.js           # User schema definition
+│   └── mediaModels.js          # CDN media metadata schema definition
 ├── routes/
-│   ├── authRoutes.js           # /api/auth/register, /api/auth/login
-│   └── mediaRoutes.js          # /api/media/upload, /api/media/:id, /my-media
+│   ├── index.js                # Primary route aggregator
+│   ├── authRoutes.js           # Authentication route definitions
+│   └── cdnRoutes.js            # Media processing route definitions
 ├── services/
-│   ├── authService.js          # Business logic: Passwords, JWT Tokens
-│   └── mediaService.js         # Sharp pipeline: Compress, Resize, Thumbnails, WebP
+│   ├── authService.js          # Password hashing and token generation
+│   └── cdnService.js           # Sharp and FFmpeg transformation pipelines
 ├── utils/
-│   ├── authHelper.js           # Bcrypt & Validator helpers
-│   ├── errorHandler.js         # Custom AppError Class
-│   └── fileHelper.js           # Byte formatter (MB/KB), Savings % calculator
-├── uploads/
-│   ├── originals/              # Raw incoming files (Temporary or Permanent)
-│   ├── optimized/              # Sharp compressed files (.webp)
-│   └── thumbnails/             # 150px quick-preview thumbnails
-├── .env                        # Port, Mongo URI, JWT Secret
-├── .gitignore                  # node_modules, .env, uploads/
-├── app.js                      # Express App, Static folder serving, 404 Route
-└── package.json                # Dependencies & scripts
+│   ├── authHelper.js           # Validation and cryptography helpers
+│   └── errorHandler.js         # AppError custom error structure
+├── uploads/                    # Target directory for optimized media assets
+├── .env                        # Environment configurations
+├── app.js                      # Application entry point and static host
+└── package.json
 ```
 
 ---
 
-## 🧠 2. Core Concepts You Will Learn & Master
+## 4. Technical Stack
 
-### A. Multer (Binary & Multipart File Handling)
-* **Multipart/form-data:** HTTP body plain JSON nahi hota, files binary chunks mein aati hain.
-* **`memoryStorage()` vs `diskStorage()`:**
-  * *DiskStorage:* File seedha hard drive par write hoti hai (Safe for 50MB videos).
-  * *MemoryStorage (`req.file.buffer`):* File RAM mein aati hai (Fastest for Sharp processing!).
-* **File Limits:** 50MB hard limit (`limits: { fileSize: 50 * 1024 * 1024 }`).
-* **File Filtering:** Sirf `image/jpeg`, `image/png`, `image/webp`, `video/mp4`, `video/quicktime` accept karna.
-
-### B. Sharp (High-Performance Image Engine)
-* **Vips C-Library Under the Hood:** Node.js native se 4-5x faster image processing.
-* **Format Conversion:** Heavy 15MB PNG ko modern `.webp` ya `.avif` mein convert karna (saving ~80% size).
-* **Smart Resizing:** Custom width/height or dynamic auto-scale (`fit: 'cover'`, `withoutEnlargement: true`).
-* **Thumbnail Generation:** 150x150 lightweight preview banana.
-* **EXIF Stripping:** GPS location, camera model data strip karna (Privacy & Size reduction).
-* **Quality Tuning:** Quality 80% set karna (Human eye cannot see the difference, but size drops massively).
-
-### C. Node.js Streams & Buffers (Deep Backend Internals)
-* Memory leak se bachna: 50MB file ko RAM mein bina crash kiye stream karna.
-* Video streaming with HTTP `206 Partial Content` (Range headers: Seek bar smoothly chal sake).
-
-### D. Security & Magic Bytes Validation (Beyond Extension Checking)
-* Hacker `.exe` ya `.sh` ko `.png` rename karke upload kar sakta hai.
-* Real MIME detection: File ke pehle 4 bytes (Magic numbers) check karna to confirm it is a genuine image/video.
-
-### E. Socket.io (Real-Time WebSocket Events)
-* Live Upload & Compression Progress Bar:
-  `client.on('upload-progress', { percent: 45 })`
-* Real-time dashboard update jab file optimize ho jaye.
+- **Runtime:** Node.js (ES Modules)
+- **Web Framework:** Express 5
+- **Image Processing:** Sharp (libvips)
+- **Video Processing:** Fluent-FFmpeg with @ffmpeg-installer/ffmpeg
+- **File Parsing:** Multer
+- **Database:** MongoDB with Mongoose ODM
+- **Authentication:** JSON Web Tokens (jsonwebtoken) and cookie-parser
+- **Security:** Bcrypt and express-rate-limit
 
 ---
 
-## 📊 3. Database Schema Blueprint (`mediaModels.js`)
+## 5. API Reference
 
-```javascript
-{
-  originalName: "nature-4k.png",
-  storedFileName: "media-173829102.webp",
-  fileType: "image", // "image" | "video"
-  mimeType: "image/webp",
-  originalSize: 15420100, // ~14.7 MB in bytes
-  compressedSize: 2104000, // ~2.0 MB in bytes
-  savingsPercentage: 86.35, // 86.35% size saved!
-  dimensions: {
-    width: 1920,
-    height: 1080
-  },
-  thumbnailUrl: "/uploads/thumbnails/thumb-173829102.webp",
-  mediaUrl: "/uploads/optimized/media-173829102.webp",
-  uploadedBy: ObjectId("User_ID_Reference"),
-  createdAt: ISODate,
-  updatedAt: ISODate
-}
-```
+### Authentication
 
----
+#### Register
+- **Endpoint:** `POST /auth/register`
+- **Payload:**
+  ```json
+  {
+    "email": "user@example.com",
+    "password": "SecurePassword123"
+  }
+  ```
 
-## 🗺️ 4. Step-by-Step Implementation Roadmap
-
-- [x] **Phase 1: Foundation (Done!)**
-  - Setup Express, MongoDB connection
-  - User Authentication (Register & Login with JWT Cookies)
-  - Custom `AppError` and Global `errorMiddleware`
-  - Rate Limiter & Security Headers
-- [ ] **Phase 2: Media Schema & Multer Setup**
-  - Create `models/mediaModels.js`
-  - Configure Multer in `middleware/uploadMiddleware.js` (50MB limit, disk/memory storage)
-  - Create `uploads/` directory with `.gitignore`
-- [ ] **Phase 3: Sharp Optimization Pipeline**
-  - Install `sharp`
-  - Build `services/mediaService.js` to compress images, auto-convert to WebP, and generate thumbnails
-  - Calculate `savingsPercentage` formula: `((orig - comp) / orig) * 100`
-- [ ] **Phase 4: Media API Endpoints**
-  - `POST /api/media/upload` (Upload single/multiple files, process via Sharp, save to DB)
-  - `GET /api/media/my-media` (List logged-in user's optimized assets & savings stats)
-  - `GET /api/media/:id` (View / stream file)
-  - `GET /api/media/:id/download` (Download with original or compressed name)
-  - `DELETE /api/media/:id` (Delete file from disk and DB)
-- [ ] **Phase 5: Real-Time Polish & Socket.io**
-  - Live progress feedback
-  - Total bandwidth saved counter
+#### Login
+- **Endpoint:** `POST /auth/login`
+- **Payload:**
+  ```json
+  {
+    "email": "user@example.com",
+    "password": "SecurePassword123"
+  }
+  ```
+- **Result:** Attaches an HTTP-Only cookie named `token` valid for 15 minutes.
 
 ---
 
-## 💼 5. LinkedIn Showcase Pitch (Your Future Post)
+### Media Operations
 
-> *"Excited to share **MediaOptix** — a high-performance media optimization engine I engineered in Node.js.*
-> 
-> *Key Highlights:*
-> * 🚀 **85%+ Payload Reduction:** Processed and converted heavy images (up to 50MB) to WebP on-the-fly using Sharp pipelines.
-> * 🛡️ **Zero-Trust File Uploads:** Configured Multer with strict byte-size boundaries, MIME filtering, and rate limits.
-> * 📈 **Instant Analytics:** Built-in computation tracking exact storage/bandwidth savings per asset.
-> * 🔐 **Secure RBAC & Session Management:** JWT stored in httpOnly, sameSite cookies with centralized error handling.*
-> 
-> *Tech Stack: Node.js, Express, Sharp, Multer, MongoDB, WebSockets.*"
+#### Guest Media Upload
+- **Endpoint:** `POST /guest-upload`
+- **Authentication:** None
+- **Payload:** `multipart/form-data` with field `file`
+- **Response Format:**
+  ```json
+  {
+    "message": "File Upload Sucessfull",
+    "filetype": "image/jpeg",
+    "originalSize": "5.17 MB",
+    "compressedSize": "0.21 MB",
+    "savingPercentage": "95.93 %",
+    "url": "http://localhost:3000/uploads/media-1793115209578.webp"
+  }
+  ```
+
+#### Authenticated Media Upload
+- **Endpoint:** `POST /user-upload`
+- **Authentication:** Required (HTTP-Only cookie)
+- **Payload:** `multipart/form-data` with field `file`
+- **Result:** Media is compressed, stored in `uploads/`, and logged in MongoDB under the authenticated user.
+
+#### Retrieve User Gallery
+- **Endpoint:** `GET /my-media`
+- **Authentication:** Required (HTTP-Only cookie)
+- **Result:** Returns an array of media objects belonging exclusively to the authenticated user.
+
+#### Delete Media Asset
+- **Endpoint:** `DELETE /media/:fileName`
+- **Authentication:** Required (HTTP-Only cookie)
+- **Example:** `DELETE /media/media-1794788795222.mp4`
+- **Result:** Validates ownership, deletes the record from MongoDB, and unlinks the file from `uploads/`.
+
+---
+
+## 6. Performance Benchmarks
+
+| Input Type | Input Format | Output Format | Input Size | Output Size | Payload Reduction |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| High-Resolution Image | JPEG / PNG | WebP (quality 80) | 5.29 MB | 0.21 MB | 95.9% |
+| Screen Capture Video | MP4 (Raw) | MP4 (libx264 / CRF 28) | 13.35 MB | 1.38 MB | 89.6% |
+
+---
+
+## 7. Setup and Execution
+
+1. Clone repository and install dependencies:
+   ```bash
+   git clone https://github.com/Faizan-Khanx/MiniCDN-Backend.git
+   cd MiniCDN-Backend
+   npm install
+   ```
+
+2. Configure environment variables in `.env`:
+   ```env
+   PORT=3000
+   MONGO_URL=mongodb://127.0.0.1:27017/MiniCDN
+   JWT_SECRET=your_jwt_secret_key
+   ```
+
+3. Launch application:
+   ```bash
+   npm run dev
+   ```
+
+---
+
+## 8. License
+ISC License.
